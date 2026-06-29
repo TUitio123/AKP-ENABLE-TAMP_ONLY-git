@@ -127,30 +127,38 @@ class Ntag424Communicator(
 
         val (sw1, resp1) = transceiveRaw(0x71.toByte(), step1Data)
 
+        // Response size after stripping SW bytes:
+        //   16 bytes = AES mode (just encRndB)
+        //   17 bytes = AES mode with extra leading byte (some chip variants)
+        //   18 bytes = LRP mode: AuthMode(1 byte = 0x02) + encRndB(16 bytes) + padding(1)
+        //   17 bytes starting with 0x02 = LRP mode: AuthMode(1) + encRndB(16)
+        logger("  Auth Step1: SW=${(sw1 ushr 8).toHex2()}${(sw1 and 0xFF).toHex2()}, ${resp1.size} bytes data")
+
         return when {
-            sw1 == 0x91AF && resp1.size >= 17 -> {
-                // Check AuthMode byte (first byte) to determine AES vs LRP
-                // AES: response is exactly 16 bytes (no AuthMode byte)
-                // LRP: response starts with AuthMode=0x02, then 16 bytes
-                if (resp1.size >= 18 && (resp1[0].toInt() and 0xFF) == 0x02) {
-                    logger("  Chip ist im LRP-Modus")
+            sw1 != 0x91AF -> {
+                // Unexpected SW
+                if (sw1 == 0x917E) {
+                    logger("  SW=917E → Chip nur LRP, versuche explizite LRP-Auth...")
                     isLrpMode = true
-                    authenticateLRP(keyNumber, key, resp1.copyOfRange(1, 17))
+                    authenticateLRPFull(keyNumber, key)
                 } else {
-                    logger("  Chip ist im AES EV2-Modus")
-                    isLrpMode = false
-                    authenticateAES(key, resp1.copyOf(16))
+                    throw Ntag424Exception("Auth Step1 fehlgeschlagen: SW=${(sw1 ushr 8).toHex2()}${(sw1 and 0xFF).toHex2()}")
                 }
             }
-            sw1 == 0x917E -> {
-                // PRECONDITION_NOT_SATISFIED: chip is in LRP-only mode
-                // Need to send with PCDCap2.1=0x02 explicitly — retry as LRP
-                logger("  SW=917E: Chip ist im LRP-Modus, starte LRP-Auth neu...")
+            resp1.size >= 17 && (resp1[0].toInt() and 0xFF) == 0x02 -> {
+                // LRP mode: first byte is AuthMode=0x02
+                logger("  → LRP-Modus erkannt (AuthMode=0x02)")
                 isLrpMode = true
-                authenticateLRPFull(keyNumber, key)
+                authenticateLRP(keyNumber, key, resp1.copyOfRange(1, 17))
+            }
+            resp1.size >= 16 -> {
+                // AES EV2 mode: 16 bytes of encRndB
+                logger("  → AES EV2-Modus erkannt (${resp1.size} bytes)")
+                isLrpMode = false
+                authenticateAES(key, resp1.copyOfRange(0, 16))
             }
             else -> {
-                throw Ntag424Exception("Auth Step1 fehlgeschlagen: SW=${(sw1 ushr 8).toHex2()}${(sw1 and 0xFF).toHex2()}")
+                throw Ntag424Exception("Auth Step1: unerwartete Antwortlänge ${resp1.size}")
             }
         }
     }
