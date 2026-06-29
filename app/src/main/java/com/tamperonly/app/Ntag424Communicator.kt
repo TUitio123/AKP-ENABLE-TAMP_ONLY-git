@@ -169,38 +169,58 @@ class Ntag424Communicator(
         logger("  AES EV2 Handshake...")
         val rndA = ByteArray(16).also { SecureRandom().nextBytes(it) }
 
+        // Decrypt rndB: IV = 0x00..00
         val rndB = aesCbcDecrypt(key, ByteArray(16), encRndB)
+        logger("  rndB: ${rndB.toHex()}")
+
+        // Rotate rndB left by 1 byte
         val rndBRotated = rndB.drop(1).toByteArray() + rndB[0]
+
+        // Encrypt rndA || rndBRotated with IV = encRndB (CBC chain continues!)
+        // NXP AN12196: "The CBC chain is continued from the previous step."
         val payload = rndA + rndBRotated
-        val encPayload = aesCbcEncrypt(key, ByteArray(16), payload)
+        val encPayload = aesCbcEncrypt(key, encRndB, payload)
 
         val (sw2, resp2) = transceiveRaw(0xAF.toByte(), encPayload)
         if (sw2 != 0x9100) throw Ntag424Exception("AES Auth Step2: SW=${(sw2 ushr 8).toHex2()}${(sw2 and 0xFF).toHex2()}")
-        if (resp2.size < 32) throw Ntag424Exception("AES Auth Step2: Antwort zu kurz")
+        if (resp2.size < 32) throw Ntag424Exception("AES Auth Step2: Antwort zu kurz (${resp2.size})")
 
+        // Response: TI(4) || Enc(rndA_rotated)(16) || PDCap2(6) || PCDCap2(6)
         val ti = resp2.copyOfRange(0, 4)
         val encRndARotated = resp2.copyOfRange(4, 20)
-        val rndARotated = aesCbcDecrypt(key, ByteArray(16), encRndARotated)
-        val rndAFromTag = rndARotated.drop(15).toByteArray() + rndARotated.copyOfRange(0, 15)
+
+        // Decrypt with IV = last 16 bytes of encPayload (CBC chain)
+        val ivForResp = encPayload.copyOfRange(encPayload.size - 16, encPayload.size)
+        val rndARotated = aesCbcDecrypt(key, ivForResp, encRndARotated)
+
+        // Un-rotate: rndA_rotated is rndA shifted left 1, so shift right 1 to recover
+        val rndAFromTag = rndARotated.takeLast(1).toByteArray() + rndARotated.copyOfRange(0, 15)
 
         if (!rndA.contentEquals(rndAFromTag)) {
-            logger("  Warnung: rndA Verifikation fehlgeschlagen (falscher Schlüssel?)")
+            // Log both for debugging
+            logger("  rndA (erwartet): ${rndA.toHex()}")
+            logger("  rndA (vom Chip): ${rndAFromTag.toHex()}")
+            logger("  Authentifizierung fehlgeschlagen: falscher Schlüssel")
             return false
         }
 
         transactionIdentifier = ti
         cmdCounter = 0
 
-        // Derive AES session keys
-        val svEnc = byteArrayOf(0xA5.toByte(), 0x5A.toByte(), 0xA5.toByte(), 0x5A.toByte()) +
-                ti + rndA.copyOfRange(0, 2) + rndB.copyOfRange(0, 2)
-        val svMac = byteArrayOf(0x5A.toByte(), 0x36.toByte(), 0x5A.toByte(), 0x36.toByte()) +
-                ti + rndA.copyOfRange(0, 2) + rndB.copyOfRange(0, 2)
+        // Session key derivation (AN12196 Section 4.1):
+        // SV_ENC = 0xA55AA55A || TI || rndA[0..1] || rndB[0..1] || 0x00..00 (pad to 16)
+        // SV_MAC = 0x5A365A36 || TI || rndA[0..1] || rndB[0..1] || 0x00..00 (pad to 16)
+        // KSesAuthENC = AES-CMAC(key, SV_ENC)
+        // KSesAuthMAC = AES-CMAC(key, SV_MAC)
+        val sv = ti + rndA.copyOfRange(0, 2) + rndB.copyOfRange(0, 2)
+        val svEnc = byteArrayOf(0xA5.toByte(), 0x5A.toByte(), 0xA5.toByte(), 0x5A.toByte()) + sv
+        val svMac = byteArrayOf(0x5A.toByte(), 0x36.toByte(), 0x5A.toByte(), 0x36.toByte()) + sv
 
         sessionEncKey = aesCmac(key, svEnc)
         sessionMacKey = aesCmac(key, svMac)
 
-        logger("  AES Authentifizierung OK! TI=${ti.toHex()}")
+        logger("  AES Authentifizierung OK!")
+        logger("  TI: ${ti.toHex()}")
         return true
     }
 
