@@ -7,6 +7,10 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# Grant write permissions for creating releases
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build Debug & Release APK
@@ -36,53 +40,62 @@ jobs:
         env:
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
 
-      - name: Build Release APK (signed with debug key)
+      - name: Build Release APK (signed with debug key for sideloading)
         run: gradle assembleRelease --stacktrace
         env:
           ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
 
-      - name: Upload Debug APK
+      - name: Rename APKs
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk 424DNA-TamperEnable-debug.apk
+          cp app/build/outputs/apk/release/app-release.apk 424DNA-TamperEnable-release.apk
+
+      - name: Upload Debug APK (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: 424DNA-TamperEnable-debug
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 30
+          path: 424DNA-TamperEnable-debug.apk
+          retention-days: 90
 
-      - name: Upload Release APK
+      - name: Upload Release APK (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: 424DNA-TamperEnable-release
-          path: app/build/outputs/apk/release/*.apk
-          retention-days: 30
+          path: 424DNA-TamperEnable-release.apk
+          retention-days: 90
 
-      - name: Create Release
+      - name: Create GitHub Release with APK
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: "424DNA TamperEnable v1.0.${{ github.run_number }}"
           body: |
             ## 424DNA TT Tamper-Enable APK
 
-            Aktiviert ausschließlich die Tamper-Erkennung auf NXP NTAG 424 DNA TT Chips.
+            Aktiviert **ausschließlich** die Tamper-Erkennung auf NXP NTAG 424 DNA TT Chips.
 
             ### Was diese App macht:
-            - ✅ Tamper-Erkennung aktivieren (SetConfiguration Option 07h)
+            - ✅ Tamper-Erkennung aktivieren (`SetConfiguration Option 07h`)
             - ❌ Keine Schlüssel werden geändert
             - ❌ Keine anderen Einstellungen werden geändert
+            - ❌ Kein NDEF-Inhalt wird geändert
 
             ### Voraussetzungen:
-            - Android 6.0+ (minSdk 23)
+            - Android 8.0+ (API 26)
             - NFC-fähiges Gerät
-            - Chip muss noch den Standard-Werksschlüssel haben (16× 0x00)
+            - Chip muss noch den **Standard-Werksschlüssel** haben (16× `0x00`)
 
             ### Installation:
-            1. APK herunterladen
-            2. "Unbekannte Quellen" in Android-Einstellungen erlauben
-            3. APK installieren
+            1. `424DNA-TamperEnable-debug.apk` herunterladen
+            2. In Android-Einstellungen → "Apps aus unbekannten Quellen" erlauben
+            3. APK installieren und ausführen
+            4. NTAG 424 DNA TT Chip ans Handy halten
+
+            > ⚠️ Die Tamper-Erkennung kann nach dem Aktivieren **nicht rückgängig gemacht** werden!
           files: |
-            app/build/outputs/apk/debug/app-debug.apk
-            app/build/outputs/apk/release/app-release.apk
+            424DNA-TamperEnable-debug.apk
+            424DNA-TamperEnable-release.apk
           draft: false
           prerelease: false
         env:
