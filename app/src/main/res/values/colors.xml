@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="white">#FFFFFF</color>
+    <color name="background">#F0F4F8</color>
+    <color name="accent">#1976D2</color>
+    <color name="status_ok">#2E7D32</color>
+    <color name="status_error">#C62828</color>
+    <color name="label_color">#78909C</color>
+    <color name="log_text">#263238</color>
+    <color name="info_bg">#E3F2FD</color>
+    <color name="info_title">#1565C0</color>
+    <color name="info_text">#1A237E</color>
+    <color name="nfc_hint_text">#004D40</color>
+    <color name="header_start">#1565C0</color>
+    <color name="header_end">#0D47A1</color>
+</resources>

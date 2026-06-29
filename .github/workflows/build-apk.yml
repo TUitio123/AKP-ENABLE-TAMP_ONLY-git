@@ -1,0 +1,80 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Debug & Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Build Release APK (signed with debug key)
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: 424DNA-TamperEnable-debug
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 30
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: 424DNA-TamperEnable-release
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      - name: Create Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "424DNA TamperEnable v1.0.${{ github.run_number }}"
+          body: |
+            ## 424DNA TT Tamper-Enable APK
+
+            Aktiviert ausschließlich die Tamper-Erkennung auf NXP NTAG 424 DNA TT Chips.
+
+            ### Was diese App macht:
+            - ✅ Tamper-Erkennung aktivieren (SetConfiguration Option 07h)
+            - ❌ Keine Schlüssel werden geändert
+            - ❌ Keine anderen Einstellungen werden geändert
+
+            ### Voraussetzungen:
+            - Android 6.0+ (minSdk 23)
+            - NFC-fähiges Gerät
+            - Chip muss noch den Standard-Werksschlüssel haben (16× 0x00)
+
+            ### Installation:
+            1. APK herunterladen
+            2. "Unbekannte Quellen" in Android-Einstellungen erlauben
+            3. APK installieren
+          files: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/release/app-release.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
